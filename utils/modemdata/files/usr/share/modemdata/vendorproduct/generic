@@ -1,0 +1,27 @@
+# Generic AT
+
+O=$(gcom -d "$DEVICE" -s $RES/vendorproduct/vendorproduct.gcom)
+
+# 查询制造商信息
+T=$(echo "$O" | awk '/CGMI:/{gsub(/.*CGMI[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+[ -n "$T" ] && VENDOR="$T"
+
+# 查询 MT 型号
+T=$(echo "$O" | awk '/CGMM:/{gsub(/.*CGMM[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+[ -n "$T" ] && PRODUCT="$T"
+
+# 查询产品软件版本信息
+T=$(echo "$O" | awk '/CGMR:/{gsub(/.*CGMR[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+[ -n "$T" ] && REVISION="$T"
+
+# 查询产品序列号
+T=$(echo "$O" | awk '/CGSN:/{gsub(/.*CGSN[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+[ -n "$T" ] && IMEI="$T"
+
+# 查询 ICCID
+T=$(echo "$O" | awk '/CCID:/{gsub(/.*CCID[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+[ -n "$T" ] && ICCID="$T"
+
+# 查询 IMSI
+T=$(echo "$O" | awk '/CIMI:/{gsub(/.*CIMI[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+[ -n "$T" ] && IMSI="$T"

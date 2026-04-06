@@ -1,0 +1,1333 @@
+# 鼎桥MT5700M-CN
+
+# 模组基本信息
+function product()
+{
+    O=$(gcom -d "$DEVICE" -s $RES/vendorproduct/vendorproduct.gcom)
+    # 查询制造商信息
+    T=$(echo "$O" | awk '/CGMI:/{gsub(/.*CGMI[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+    [ -n "$T" ] && VENDOR="$T"
+    # 查询 MT 型号
+    T=$(echo "$O" | awk '/CGMM:/{gsub(/.*CGMM[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+    [ -n "$T" ] && PRODUCT="$T"
+    # 查询产品软件版本信息
+    T=$(echo "$O" | awk '/CGMR:/{gsub(/.*CGMR[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+    [ -n "$T" ] && REVISION="$T"
+    # 查询产品序列号
+    T=$(echo "$O" | awk '/CGSN:/{gsub(/.*CGSN[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+    [ -n "$T" ] && IMEI="$T"
+    # 查询 ICCID
+    T=$(echo "$O" | awk '/CCID:/{gsub(/.*CCID[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+    [ -n "$T" ] && ICCID="$T"
+    # 查询 IMSI
+    T=$(echo "$O" | awk '/CIMI:/{gsub(/.*CIMI[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+    [ -n "$T" ] && IMSI="$T"
+}
+
+# 驻留小区信号强度查询
+function signal_realtime()
+{
+    # 基础信息
+    RAT="" 
+    MCC="" 
+    MNC=""
+    # NR特有信息
+    NR_CELL_ID=""
+    NR_ARFCN=""
+    NR_SCS=""
+    NR_PCI=""
+    NR_TAC=""
+    NR_RSRP=""
+    NR_RSRQ=""
+    NR_SINR=""
+    # LTE特有信息
+    LTE_CELL_ID=""
+    LTE_ARFCN=""
+    LTE_PCI=""
+    LTE_TAC=""
+    LTE_RSRP=""
+    LTE_RSRQ=""
+    LTE_RSSI=""
+    # WCDMA特有信息
+    WCDMA_ARFCN=""
+    WCDMA_PCS=""
+    WCDMA_CELL_ID=""
+    WCDMA_LAC=""
+    WCDMA_RSCP=""
+    WCDMA_RXLEV=""
+    WCDMA_ECNO=""
+    WCDMA_DRX=""
+    WCDMA_URA=""
+
+    # 查询当前驻留小区的参数值 AT^MONSC
+    local NSA=""
+    local O=$(sms_tool -D -d $DEVICE at "AT^MONSC" | tr -d '\r')
+    # NSA时会同时返回NR和LTE的驻网信息, 需特殊处理
+    echo "$O" | grep -q 'NR' && echo "$O" | grep -q 'LTE' && NSA="yes"
+    if [ x"${NSA}" == x"yes" ]; then
+        RAT="NSA"
+    else
+        RAT=$(echo "$O" | awk -F'[ ,]' '/\^MONSC:/{print $2}')
+    fi
+
+    # 不同网络制式, 返回的数据格式不同
+    case "$RAT" in
+        "NR")
+            # ^MONSC: <RAT>,<MCC>,<MNC>,<ARFCN-NR>,<SCS>,<Cell_ID>,<PCI>,<TAC>,<RSRP>,<RSRQ>,<SINR> OK
+            eval $(echo "$O" | awk -F'[,: ]+' '/MONSC/{printf "RAT=%s MCC=%s MNC=%s NR_ARFCN=%s NR_SCS=%s NR_CELL_ID=%s NR_PCI=%s NR_TAC=%s NR_RSRP=%s NR_RSRQ=%s NR_SINR=%s",$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12}')
+            RAT="NR/SA"
+            ;;
+        "LTE")
+            # ^MONSC: <RAT>,<MCC>,<MNC>,<ARFCN>,<Cell_ID>,<PCI>,<TAC>,<RSRP>,<RSRQ>,<RSSI>
+            # ^MONSC: LTE,460,11,1750,B26F9B2,DF,5D63,-91,-14,-56 OK
+            eval $(echo "$O" | awk -F'[,: ]+' '/MONSC/{printf "RAT=%s MCC=%s MNC=%s LTE_ARFCN=%s LTE_CELL_ID=%s LTE_PCI=%s LTE_TAC=%s LTE_RSRP=%s LTE_RSRQ=%s LTE_RSSI=%s",$2,$3,$4,$5,$6,$7,$8,$9,$10,$11}')
+            RAT="LTE"
+            # echo "RAT=${RAT} MCC=${MCC} MNC=${MNC} LTE_ARFCN=${LTE_ARFCN} LTE_CELL_ID=${LTE_CELL_ID} LTE_PCI=${LTE_PCI} LTE_TAC=${LTE_TAC} LTE_RSRP=${LTE_RSRP} LTE_RSRQ=${LTE_RSRQ} LTE_RSSI=${LTE_RSSI}"
+            ;;
+        "WCDMA")
+            # ^MONSC: <RAT>,<MCC>,<MNC>,<ARFCN>,<PSC>,<Cell_ID>,<LAC>,<RSCP>,<RXLEV>,<EC/N0>,<DRX>,<URA>
+            eval $(echo "$O" | awk -F'[,: ]+' '/MONSC/{printf "RAT=%s MCC=%s MNC=%s WCDMA_ARFCN=%s WCDMA_PCS=%s WCDMA_CELL_ID=%s LAC=%s RSCP=%s RXLEV=%s ECNO=%s DRX=%s URA=%s",$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13}')
+            RAT="WCDMA"
+            ;;
+        "NSA")
+            # ^MONSC: NR,<MCC>,<MNC>,<ARFCN-NR>,<SCS>,<Cell_ID>,<PCI>,<TAC>,<RSRP>,<RSRQ>,<SINR>
+            # ^MONSC: LTE,<MCC>,<MNC>,<ARFCN>,<Cell_ID>,<PCI>,<TAC>,<RSRP>,<RSRQ>,<RSSI>
+            NR_LINE=$(echo "$O" | awk '/\^MONSC:.*NR/{print; exit}')
+            LTE_LINE=$(echo "$O" | awk '/\^MONSC:.*LTE/{print; exit}')
+            eval $(echo "$NR_LINE"  | awk -F'[,: ]+' '/MONSC/{printf "MCC=%s MNC=%s NR_ARFCN=%s NR_SCS=%s NR_CELL_ID=%s NR_PCI=%s NR_TAC=%s NR_RSRP=%s NR_RSRQ=%s NR_SINR=%s",$3,$4,$5,$6,$7,$8,$9,$10,$11,$12}')
+            eval $(echo "$LTE_LINE" | awk -F'[,: ]+' '/MONSC/{printf "LTE_MCC=%s LTE_MNC=%s LTE_ARFCN=%s LTE_CELL_ID=%s LTE_PCI=%s LTE_TAC=%s LTE_RSRP=%s LTE_RSRQ=%s LTE_RSSI=%s",$3,$4,$5,$6,$7,$8,$9,$10,$11}')
+            RAT="NR/NSA"
+            ;;
+    esac
+
+    # 未驻留到小区时,尝试从IMSI中获取运营商信息
+    T=$(echo "$O" | awk '/CIMI:/{gsub(/.*CIMI[ ]*:[ ]*/,"");gsub(/"/,"");print $0}')
+    [ -n "$T" ] && MCC=$(echo "$T" | cut -c1-3) && MNC=$(echo "$T" | cut -c4-5)
+
+}
+
+# 相邻小区信号查询
+function neighborCell_readtime()
+{
+    O=$(sms_tool -D -d $DEVICE at "AT^MONNC" | tr -d '\r')
+
+    # 格式: ^MONNC: <RAT>[,<cell_paras>]
+    # 每种 RAT 可能有多行 (GSM最多6个, WCDMA/LTE/NR最多16个)
+    # GSM:   ^MONNC: GSM,<BAND>,<ARFCN>,<BSIC>,<Cell_ID>,<LAC>,<RXLEV>
+    # WCDMA: ^MONNC: WCDMA,<ARFCN>,<PSC>,<RSCP>,<EC/N0>
+    # LTE:   ^MONNC: LTE,<ARFCN>,<PCI>,<RSRP>,<RSRQ>,<RXLEV>
+    # NR:    ^MONNC: NR,<ARFCN-NR>,<PCI>,<RSRP>,<RSRQ>,<SINR>
+    # NONE:  ^MONNC: NONE
+
+    # GSM 相邻小区: BAND,ARFCN,BSIC,Cell_ID,LAC,RXLEV
+    NC_GSM=$(echo "$O" | awk -F'[ ,]+' '/\^MONNC:.*GSM/{printf "%s,%s,%s,%s,%s,%s\n",$3,$4,$5,$6,$7,$8}')
+
+    # WCDMA 相邻小区: ARFCN,PSC,RSCP,ECNO
+    NC_WCDMA=$(echo "$O" | awk -F'[ ,]+' '/\^MONNC:.*WCDMA/{printf "%s,%s,%s,%s\n",$3,$4,$5,$6}')
+
+    # LTE 相邻小区: ARFCN,PCI,RSRP,RSRQ,RXLEV
+    NC_LTE=$(echo "$O" | awk -F'[ ,]+' '/\^MONNC:.*LTE/{printf "%s,%s,%s,%s,%s\n",$3,$4,$5,$6,$7}')
+
+    # NR 相邻小区: ARFCN,PCI,RSRP,RSRQ,SINR
+    NC_NR=$(echo "$O" | awk -F'[ ,]+' '/\^MONNC:.*NR/{printf "%s,%s,%s,%s,%s\n",$3,$4,$5,$6,$7}')
+
+    # NONE: 无相邻小区
+    echo "$O" | grep -q '^\^MONNC: NONE' && NC_GSM="" && NC_WCDMA="" && NC_LTE="" && NC_NR=""
+
+    # echo "NC_GSM=${NC_GSM}"
+    # echo "NC_WCDMA=${NC_WCDMA}"
+    # echo "NC_LTE=${NC_LTE}"
+    # echo "NC_NR=${NC_NR}"
+
+    # 封装成 JSON
+    NC_GSM_JSON=$(echo "$NC_GSM" | awk -F',' 'NF>=6{printf "%s{\"band\":\"%s\",\"arfcn\":\"%s\",\"bsic\":\"%s\",\"cell_id\":\"%s\",\"lac\":\"%s\",\"rxlev\":\"%s\"}", (NR>1?",":""),$1,$2,$3,$4,$5,$6}' | awk 'BEGIN{printf "["} {printf "%s",$0} END{printf "]"}')
+    NC_WCDMA_JSON=$(echo "$NC_WCDMA" | awk -F',' 'NF>=4{printf "%s{\"arfcn\":\"%s\",\"psc\":\"%s\",\"rscp\":\"%s\",\"ecno\":\"%s\"}", (NR>1?",":""),$1,$2,$3,$4}' | awk 'BEGIN{printf "["} {printf "%s",$0} END{printf "]"}')
+    NC_LTE_JSON=$(echo "$NC_LTE" | awk -F',' 'NF>=5{printf "%s{\"arfcn\":\"%s\",\"pci\":\"%s\",\"rsrp\":\"%s\",\"rsrq\":\"%s\",\"rxlev\":\"%s\"}", (NR>1?",":""),$1,$2,$3,$4,$5}' | awk 'BEGIN{printf "["} {printf "%s",$0} END{printf "]"}')
+    NC_NR_JSON=$(echo "$NC_NR" | awk -F',' 'NF>=5{printf "%s{\"arfcn\":\"%s\",\"pci\":\"%s\",\"rsrp\":\"%s\",\"rsrq\":\"%s\",\"sinr\":\"%s\"}", (NR>1?",":""),$1,$2,$3,$4,$5}' | awk 'BEGIN{printf "["} {printf "%s",$0} END{printf "]"}')
+}
+
+# 5G Core 注册状态，即终端在 5G 核心网 的注册状态
+function c5G_Core_realtime()
+{
+    # +C5GREG: <n>,<stat>[,[<tac>],[<ci>],[<AcT>],...]
+    # n: 0：禁止+C5GREG的主动上报; 1：使能+C5GREG: <stat>的主动上报; 2: 更详细的上报信息
+    # stat: 0-未注册 1-已注册本地网 2-未注册但正在搜索 3-注册被拒绝 5-已注册漫游网 8：只允许紧急呼救
+    # tac: 位置区码 (16 进制)
+    # ci: 小区 ID(16 进制)
+    # AcT: 接入技术 10：EUTRAN-5GC 11：NR-5GC
+    O=$(sms_tool -D -d $DEVICE at "AT+C5GREG?" | tr -d '\r')
+    C5GREG_JSON=$(echo "$O" | awk -F'[,: ]+' '/\+C5GREG:/{
+        n=$2
+        stat=$3
+        tac=$4
+        ci=$5
+        act=$6
+        
+        # 转换 stat 为可读文本
+        if(stat=="0") stat_text="未注册"
+        else if(stat=="1") stat_text="已注册本地网"
+        else if(stat=="2") stat_text="未注册但正在搜索"
+        else if(stat=="3") stat_text="注册被拒绝"
+        else if(stat=="5") stat_text="已注册漫游网"
+        else if(stat=="8") stat_text="只允许紧急呼救"
+        else stat_text=stat
+        
+        # 转换 act 为可读文本
+        if(act=="10") act_text="EUTRAN-5GC"
+        else if(act=="11") act_text="NR-5GC"
+        else act_text=act
+
+        # 去除多余双引号
+        gsub(/"/, "", ci)
+        gsub(/"/, "", tac)
+        
+        printf "{\"n\":\"%s\",\"stat\":\"%s\",\"tac\":\"%s\",\"ci\":\"%s\",\"act\":\"%s\"}", n,stat_text,tac,ci,act_text
+    }')
+}
+
+# LTE/NR工作频率查询,当前小区的频率信息
+function freq_realtime()
+{
+    # AT^HFREQINFO?
+    # <CR><LF>^HFREQINFO:<n>,<sysmode>,
+    # <band_class1>,<dl_fcn1>,<dl_freq1><dl_bw1>,<ul_fcn1>,<ul_freq1>,<ul_bw1>,
+    # [<band_class2>,<dl_fcn2>,<dl_freq2><dl_bw2>,<ul_fcn2>,<ul_freq2>,<ul_bw2>,
+    # [<band_class3>,<dl_fcn3>,<dl_freq3><dl_bw3>,<ul_fcn3>,<ul_freq3>,<ul_bw3>,
+    # [<band_class4>,<dl_fcn4>,<dl_freq4><dl_bw4>,<ul_fcn4>,<ul_freq4>,<ul_bw4>]]
+    # ]<CR><LF>
+    # <CR><LF>OK<CR><LF>
+    local O=$(sms_tool -D -d $DEVICE at "AT^HFREQINFO?" | tr -d '\r')
+    HFREQINFO_JSON=$(echo "$O" | awk '
+        /\^HFREQINFO:/ {
+            line=$0
+            sub(/.*\^HFREQINFO:[ ]*/, "", line)
+            gsub(/,/, " ", line)
+            gsub(/[[:space:]]+/, " ", line)
+            n=split(line, a, " ")
+            if (n < 2) next
+
+            i=1
+            nval=a[i++]
+            sysmode=a[i++]
+
+            bands=""
+            first=1
+            while (i + 6 <= n) {
+                band_class=a[i++]
+                dl_fcn=a[i++]
+                dl_freq=a[i++]
+                dl_bw=a[i++]
+                ul_fcn=a[i++]
+                ul_freq=a[i++]
+                ul_bw=a[i++]
+
+                if (band_class == "") break
+                if (!first) bands=bands ","
+                bands=bands sprintf("{\"band_class\":\"%s\",\"dl_fcn\":\"%s\",\"dl_freq\":\"%s\",\"dl_bw\":\"%s\",\"ul_fcn\":\"%s\",\"ul_freq\":\"%s\",\"ul_bw\":\"%s\"}", band_class, dl_fcn, dl_freq, dl_bw, ul_fcn, ul_freq, ul_bw)
+                first=0
+            }
+
+            printf "{\"n\":\"%s\",\"sysmode\":\"%s\",\"bands\":[%s]}", nval, sysmode, bands
+            exit
+        }')
+}
+
+# EPS域注册状态
+function eps_realtime()
+{
+    # <CR><LF>+CEREG: <n>,<stat>[,<lac>,<ci>[,<AcT>]]<CR><LF>
+    # n: 0-关闭主动上报 1-开启stat主动上报 2-上报完整信息
+    # stat: 0-未注册 1-已注册本地网 2-未注册但正在搜索 3-注册被拒绝 4-未知原因 5-已注册漫游网
+    # lac: 位置码信息，四个字符，16进制表示。（例：“00C3”＝10进制的195）
+    # ci: 小区信息，八个字符，16进制表示
+    # AcT: 整型值，当前网络的接入技术 0-GSM 1-GSM Compact 2-UTRAN 3-GSM w/EGPRS 4-UTRAN w/HSDPA 5-UTRAN w/HSUPA 6-UTRAN w/HSDPA 和HSUPA 7-E-UTRAN 10-EUTRAN-5GC 11-NR-5GC
+    O=$(sms_tool -D -d $DEVICE at "AT+CEREG?" | tr -d '\r')
+    
+    CEREG_JSON=$(echo "$O" | awk -F'[,: ]+' '/\+CEREG:/{
+        n=$2
+        stat=$3
+        lac=$4
+        ci=$5
+        act=$6
+        
+        # 转换 stat 为可读文本
+        if(stat=="0") stat_text="未注册"
+        else if(stat=="1") stat_text="已注册本地网"
+        else if(stat=="2") stat_text="未注册但正在搜索"
+        else if(stat=="3") stat_text="注册被拒绝"
+        else if(stat=="4") stat_text="未知原因"
+        else if(stat=="5") stat_text="已注册漫游网"
+        else stat_text=stat
+        
+        # 转换 act 为可读文本
+        if(act=="0") act_text="GSM"
+        else if(act=="1") act_text="GSM Compact"
+        else if(act=="2") act_text="UTRAN"
+        else if(act=="3") act_text="GSM w/EGPRS"
+        else if(act=="4") act_text="UTRAN w/HSDPA"
+        else if(act=="5") act_text="UTRAN w/HSUPA"
+        else if(act=="6") act_text="UTRAN w/HSDPA 和HSUPA"
+        else if(act=="7") act_text="E-UTRAN"
+        else if(act=="10") act_text="EUTRAN-5GC"
+        else if(act=="11") act_text="NR-5GC"
+        else act_text=act
+        
+        printf "{\"n\":\"%s\",\"stat\":\"%s\",\"lac\":\"%s\",\"ci\":\"%s\",\"act\":\"%s\"}", n,stat_text,lac,ci,act_text
+    }')   
+}
+# SIM卡状态
+function sim_realtime()
+{
+    # <CR><LF>^SIMSQ: <mode>,<sim_status><CR><LF>
+    # mode:0-关闭SIM卡状态主动上报; 1-使能SIM卡状态主动上报
+    # 0: 卡不在位 SIM not Inserted
+    # 1: 卡已插入 SIM Inserted
+    # 2: 卡被锁 SIM PIN/PUK locked
+    # 3: SIMLOCK 锁定(暂不支持上报)
+    # 10: 卡文件正在初始化 SIM Initializing
+    # 11: 卡初始化完成 （可接入网络）SIM Initialized (Network service available)
+    # 12: 卡初始化完成 （短信和电话本可以接入）SIM Ready (PBM and SMS access)
+    # 98: 卡物理失效 （PUK锁死或者卡物理    失效）
+    # 99: 卡移除 SIM removed
+    # 100: 卡错误（初始化过程中，卡失败）
+
+    O=$(sms_tool -D -d $DEVICE at "AT^SIMSQ?" | tr -d '\r')
+    
+    CPIN_TEXT=$(echo "$O" | awk -F'[,:]+' '/\^SIMSQ:/{
+        mode=$2
+        sim_status=$3
+        
+        # 转换 sim_status 为可读文本
+        if(sim_status=="0") status_text="SIM not Inserted"
+        else if(sim_status=="1") status_text="SIM Inserted"
+        else if(sim_status=="2") status_text="SIM PIN/PUK locked"
+        else if(sim_status=="3") status_text="SIMLOCK"
+        else if(sim_status=="10") status_text="SIM Initializing"
+        else if(sim_status=="11") status_text="SIM Initialized (Network service available)"
+        else if(sim_status=="12") status_text="SIM Ready (PBM and SMS access)"
+        else if(sim_status=="98") status_text="卡物理失效(PUK锁死或者卡物理失效)"
+        else if(sim_status=="99") status_text="SIM removed"
+        else if(sim_status=="100") status_text="卡错误(初始化过程中，卡失败)"
+        else status_text=sim_status
+        
+        printf "%s", status_text
+    }')    
+}
+
+# 查询入网配置, 改模组AT指令设置有缺陷,必须先查询是否为LTE入网
+function query_net_settings()
+{
+    SETTINGS_NET=""  # SA SA+NSA NSA LTE
+
+    # 查询是否为LTE入网,如果是LTE入网,不必继续查询,退出
+    local ATCMD="AT^SYSCFGEX?"
+    local O=$(sms_tool -D -d $DEVICE at "AT^SYSCFGEX?" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    eval $(echo "$O" | awk -F'[,: ]+' '/SYSCFGEX/{printf "acqorder=%s",$2}')
+
+    [ x"${acqorder}" = "x03" ] && SETTINGS_NET="LTE" && {
+        logger -t "NCM" "Radio Access Technology(rat) now is ${SETTINGS_NET}"
+        return 0
+    }
+
+    # 查询5G接入模式 SA NSA SA+NSA
+    ATCMD="AT^C5GOPTION?"
+    O=$(sms_tool -D -d $DEVICE at "AT^C5GOPTION?" | tr -d '\r')
+    logger -t "NCM" "$ATCMD" "$O"
+
+    # ^C5GOPTION:<nr_sa_support_flag>,<nr_dc_mode>,<5gc_access_mode><CR><LF>
+    eval $(echo "$O" | awk -F'[,: ]+' '/C5GOPTION/{printf "nr_sa_support_flag=%s nr_dc_mode=%s gc_access_mode=%s",$2,$3,$4}')
+    # echo "nr_sa_support_flag=${nr_sa_support_flag} nr_dc_mode=${nr_dc_mode} gc_access_mode=${gc_access_mode}"
+
+    if [ x"${nr_sa_support_flag}" = "x1" ] && [ x"${nr_dc_mode}" = "x1" ] && [ x"${gc_access_mode}" = "x1" ]; then
+        SETTINGS_NET="SA+NSA"
+    elif [ x"${nr_sa_support_flag}" = "x1" ] && [ x"${nr_dc_mode}" = "x0" ] && [ x"${gc_access_mode}" = "x1" ]; then
+        SETTINGS_NET="SA"
+    elif [ x"${nr_sa_support_flag}" = "x0" ] && [ x"${nr_dc_mode}" = "x1" ] && [ x"${gc_access_mode}" = "x0" ]; then
+        SETTINGS_NET="NSA"
+    else
+        SETTINGS_NET="Unknown"
+    fi
+
+    logger -t "NCM" "Radio Access Technology(rat) now now is ${SETTINGS_NET}"
+}
+
+# 查询NR 锁频 锁小区设置
+function query_nr_freqlock_settings()
+{
+    # 查询NR锁频 锁小区设置
+    local operatetype=""          # 是否启用锁频或锁小区功能,0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
+    local forbidFlag=""           # 禁止移动性flag; 0-不允许重选和切换; 1-允许重选和切换
+    local num=""                  # 锁的个数(1~20)
+    local band=""                 # 字符串类型，携带一组band参数，每个band信息使用“,”号隔开，band取值范围0～65535
+    local arfcn=""                # 当前锁定的SSB频点，取值范围0～4294967295; 当锁频类型为锁频点和所小区时候设置该参数，锁band时不能设置该参数
+    local scstype=""              # 频点的scstype信息，锁类型为锁频点和锁小区时候携带; 每个参数使用“,”号隔开，取值范围0～4
+    local pci=""                  # 需要锁定的小区ID,字符串类型，每个pci之间使用“,”分开，pci的取值范围0~1007
+
+    local O=$(sms_tool -D -d $DEVICE at "AT^NRFREQLOCK?" | tr -d '\r')
+    
+    # 解析 operatetype
+    operatetype=$(echo "$O" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $2}')
+    
+    case "${operatetype}" in
+        "0")
+            # 关闭锁频功能
+            ;;
+        "1")
+            # 启用锁定频点功能
+            forbidFlag=$(echo "$O" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $3}')
+            num=$(echo "$O" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $4}')
+            # 解析多行 band,arfcn,scstype
+            band=$(echo "$O" | awk '/\^NRFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
+            arfcn=$(echo "$O" | awk '/\^NRFREQLOCK:/{next} NF>=2{print $2}' | tr '\n' ',' | sed 's/,$//')
+            scstype=$(echo "$O" | awk '/\^NRFREQLOCK:/{next} NF>=3{print $3}' | tr '\n' ',' | sed 's/,$//')
+            ;;
+        "2")
+            # 启用锁定小区功能
+            forbidFlag=$(echo "$O" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $3}')
+            num=$(echo "$O" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $4}')
+            # 解析多行 band,arfcn,scstype,pci
+            band=$(echo "$O" | awk '/\^NRFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
+            arfcn=$(echo "$O" | awk '/\^NRFREQLOCK:/{next} NF>=2{print $2}' | tr '\n' ',' | sed 's/,$//')
+            scstype=$(echo "$O" | awk '/\^NRFREQLOCK:/{next} NF>=3{print $3}' | tr '\n' ',' | sed 's/,$//')
+            pci=$(echo "$O" | awk '/\^NRFREQLOCK:/{next} NF>=4{print $4}' | tr '\n' ',' | sed 's/,$//')
+            ;;
+        "3")
+            # 启用锁定Band功能
+            forbidFlag=$(echo "$O" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $3}')
+            num=$(echo "$O" | awk -F'[,: ]+' '/\^NRFREQLOCK:/{print $4}')
+            # 只解析 band
+            band=$(echo "$O" | awk '/\^NRFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
+            ;;
+    esac
+
+    # 封装成 JSON
+    # 将逗号分隔的多个band封装为数组
+    local BAND_JSON=$(echo "$band" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
+    local ARFCN_JSON=$(echo "$arfcn" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
+    local SCSTYPE_JSON=$(echo "$scstype" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
+    local PCI_JSON=$(echo "$pci" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
+    NR_FREQLOCK_JSON=$(printf '{"operatetype":"%s","forbid_flag":"%s","num":"%s","band":%s,"arfcn":%s,"scstype":%s,"pci":%s}' \
+        "${operatetype}" "${forbidFlag}" "${num}" \
+        "${BAND_JSON:-[]}" "${ARFCN_JSON:-[]}" "${SCSTYPE_JSON:-[]}" "${PCI_JSON:-[]}")
+}
+
+# 查询NR 锁频 锁小区设置
+function query_lte_freqlock_settings()
+{
+    # 查询NR锁频 锁小区设置
+    local operatetype=""          # 是否启用锁频或锁小区功能,0-关闭锁频功能; 1-启用锁定频点功能; 2-启用锁定小区功能; 3-启用锁定Band功能
+    local forbidFlag=""           # 禁止移动性flag; 0-不允许重选和切换; 1-允许重选和切换
+    local num=""                  # 锁的个数(1~20)
+    local band=""                 # 字符串类型，携带一组band参数，每个band信息使用“,”号隔开，band取值范围0～65535
+    local arfcn=""                # 当前锁定的SSB频点，取值范围0～4294967295; 当锁频类型为锁频点和所小区时候设置该参数，锁band时不能设置该参数
+    local pci=""                  # 需要锁定的小区ID,字符串类型，每个pci之间使用“,”分开，pci的取值范围0~1007
+
+    local O_RAW=$(sms_tool -D -d $DEVICE at "AT^LTEFREQLOCK?" | tr -d '\r')
+    local O=$(echo "$O_RAW" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g')
+    # echo "0=$O"
+    # 0= ^LTEFREQLOCK: 3 0,2 1 1 OK
+
+
+    # 解析 operatetype
+    operatetype=$(echo "$O" | sed -n 's/.*\^LTEFREQLOCK:[[:space:]]*\([0-9]\+\).*/\1/p')
+    # echo "operatetype=${operatetype}"
+    
+    case "${operatetype}" in
+        "0")
+            # 关闭锁频功能
+            ;;
+        "1")
+            # 启用锁定频点功能
+            forbidFlag=$(echo "$O_RAW" | awk -F'[,: ]+' '/\^LTEFREQLOCK:/{print $3}')
+            num=$(echo "$O_RAW" | awk -F'[,: ]+' '/\^LTEFREQLOCK:/{print $4}')
+            # 解析多行 band,arfcn
+            band=$(echo "$O_RAW" | awk '/\^LTEFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
+            arfcn=$(echo "$O_RAW" | awk '/\^LTEFREQLOCK:/{next} NF>=2{print $2}' | tr '\n' ',' | sed 's/,$//')
+            ;;
+        "2")
+            # 启用锁定小区功能
+            forbidFlag=$(echo "$O_RAW" | awk -F'[,: ]+' '/\^LTEFREQLOCK:/{print $3}')
+            num=$(echo "$O_RAW" | awk -F'[,: ]+' '/\^LTEFREQLOCK:/{print $4}')
+            # 解析多行 band,arfcn,pci
+            band=$(echo "$O_RAW" | awk '/\^LTEFREQLOCK:/{next} NF>=1{print $1}' | tr '\n' ',' | sed 's/,$//')
+            arfcn=$(echo "$O_RAW" | awk '/\^LTEFREQLOCK:/{next} NF>=2{print $2}' | tr '\n' ',' | sed 's/,$//')
+            pci=$(echo "$O_RAW" | awk '/\^LTEFREQLOCK:/{next} NF>=4{print $3}' | tr '\n' ',' | sed 's/,$//')
+            ;;
+        "3")
+            # 0= ^LTEFREQLOCK: 3 0,2 1 1 OK
+            # 启用锁定Band功能
+            # echo "O==$O"
+            eval $(echo "$O" | awk -F'[ ,]+' '{
+                for (i = 1; i <= NF; i++) {
+                    if ($i == "^LTEFREQLOCK:") {
+                        oper = $(i + 1)
+                        forbid = $(i + 2)
+                        n = $(i + 3)
+                        bands = ""
+                        for (j = i + 4; j <= i + 3 + n && j <= NF; j++) {
+                            if ($(j) == "OK") break
+                            bands = bands (bands == "" ? "" : ",") $(j)
+                        }
+                        printf "operatetype=%s forbidFlag=%s num=%s band=\"%s\"", oper, forbid, n, bands
+                        exit
+                    }
+                }
+            }')
+            ;;
+    esac
+
+    # 封装成 JSON
+    # 将逗号分隔的多个band封装为数组
+    local BAND_JSON=$(echo "$band" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
+    local ARFCN_JSON=$(echo "$arfcn" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')
+    local PCI_JSON=$(echo "$pci" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}; printf "]"}')    
+    LTE_FREQLOCK_JSON=$(printf '{"operatetype":"%s","forbid_flag":"%s","num":"%s","band":%s,"arfcn":%s,"scstype":%s,"pci":%s}' \
+        "${operatetype}" "${forbidFlag}" "${num}" \
+        "${BAND_JSON:-[]}" "${ARFCN_JSON:-[]}" "${SCSTYPE_JSON:-[]}" "${PCI_JSON:-[]}")
+}
+
+# 查询设置的PDP上下文
+function query_pdp_settings()
+{
+    # +CGDCONT: <cid>,<PDP_type>,<APN>,<PDP_addr>,<d_comp>,<h_comp>,...
+    local ATCMD="AT+CGDCONT?"
+    local O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD $O"
+
+    PDP_JSON=$(echo "$O" | awk -F',' '/\+CGDCONT:/{
+        cid=$1
+        sub(/.*CGDCONT: /, "", cid)
+        
+        pdp_type=$2
+        gsub(/"/, "", pdp_type)
+        
+        apn=$3
+        gsub(/"/, "", apn)
+        
+        pdp_addr=$4
+        gsub(/"/, "", pdp_addr)
+        
+        if(cid==1) printf "{\"cid\":\"%s\",\"pdp_type\":\"%s\",\"apn\":\"%s\",\"pdp_addr\":\"%s\"}", cid,pdp_type,apn,pdp_addr
+    }')
+ 
+    logger -t "NCM" "cid:${cid} pdp_type:${pdp_type} apn:${apn} pdp_addr:${pdp_addr}"
+}
+
+# 鉴权设置
+function query_auth_settings()
+{
+    # ^AUTHDATA: <cid>,<Auth_type>,<passwd>,<username>,<PLMN>
+    O=$(sms_tool -D -d $DEVICE at "AT^AUTHDATA?" | tr -d '\r')
+    # ^AUTHDATA: 1,2,"passwd","username",""
+    # ^AUTHDATA: 8,2,"","",""
+    # OK
+    AUTH_JSON=$(echo "$O" | awk -F'[,"]+' '/\^AUTHDATA:/{cid=substr($1,index($1," ")+1); if(cid==1) printf "{\"cid\":\"%s\",\"auth_type\":\"%s\",\"passwd\":\"%s\",\"username\":\"%s\",\"plmn\":\"%s\"}", cid,$2,$3,$4,$5}')
+}
+
+# 实时状态信息
+function status()
+{
+    sim_realtime            # SIM卡状态
+    c5G_Core_realtime       # 5G Core注册状态
+    eps_realtime            # EPS域注册状态,即LTE注册状态
+    freq_realtime           # LTE/NR工作频率/频段查询
+    signal_realtime         # 当前驻留小区信号强度查询
+    neighborCell_readtime   # 相邻小区信号强度查询
+}
+
+# 配置查询,注意:不是实时信息,是用户配置
+function query_settings()
+{
+    query_net_settings            # 查询入网配置
+    query_nr_freqlock_settings    # 查询NR锁频锁小区设置
+    query_lte_freqlock_settings   # 查询LTE锁频锁小区配置
+    query_pdp_settings            # 查询设置的PDP上下文
+    query_auth_settings           # 拨号时的鉴权设置
+}
+
+######################################################################
+# 模组初始化设置
+######################################################################
+# 设置网卡数量为1
+function init_netnum()
+{
+    local ATCMD="AT^SETNETNUM?"
+    local O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    NETNUM=$(echo "$O" | awk '/^[0-9]+$/{print $1}')
+    if [ "x${NETNUM}" != "x1" ]; then
+        ATCMD="AT^SETNETNUM=1"
+        O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD" "$O"
+        
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set network number to 1" >&2
+        fi
+    fi
+}
+
+# 设置USB端口形态配置为Linux NCM模式
+function init_ncm()
+{
+    local ATCMD="AT^SETMODE?"
+    local O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    # 
+    # local MODE=$(echo "$O" | awk '/^[0-9]+$/{print $1}')
+    # if [ "x${MODE}" != "x4" ]; then
+    #     ATCMD=AT^SETMODE=4
+    #     O=$(sms_tool -D -d $DEVICE at "AT^SETMODE=4" | tr -d '\r')
+
+    #     logger -t "NCM" "$ATCMD" "$O"
+
+    #     if ! echo "$O" | grep -q "OK"; then
+    #         echo "Error: Failed to set mode Linux NCM mode=4" >&2
+    #     fi
+    # fi
+}
+
+# 开启SIM卡热插拔
+function init_simhotplug()
+{
+    local ATCMD="AT^TDSIMHP?"
+    local O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    local SIMHOTPLUG=$(echo "$O" | awk '/\^TDSIMHP:/{print $2}')
+    if [ "x${SIMHOTPLUG}" != "x1" ]; then
+        ATCMD="AT^TDSIMHP=1"
+        O=$(sms_tool -D -d $DEVICE at "AT^TDSIMHP=1" | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD" "$O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to enable SIM hotplug" >&2
+        fi
+    fi
+}
+
+# 关闭主动上报, 避免影响AT指令解析
+function init_report
+{   
+    local ATCMD="AT^CURC=0"
+    local O=$(sms_tool -D -d $DEVICE at ${ATCMD})
+}
+
+function init()
+{   
+    init_netnum         # 网卡数量初始化为1
+    init_ncm            # 设置USB端口形态配置为Linux NCM模式
+    init_simhotplug     # 开启SIM卡热插拔
+    init_report         # 关闭主动上报
+}
+
+######################################################################
+# 拨号相关设置
+######################################################################
+# 设置APN, 使用CID=1的PDP上下文设置APN
+function dial_apn()
+{
+    local APN=""
+
+    logger -t "NCM" "dial_apn" "$DIAL_PARAMS"
+    [ -n "$DIAL_PARAMS" ] && APN=$(echo "$DIAL_PARAMS" | jq -r '.apn // empty')
+    
+    logger -t "NCM" "dial_apn" "$APN"
+    
+    # [ ! -n "$APN" ] && return     # APN允许为空
+    
+    query_pdp_settings
+    # [ "${APN}" = "${apn}" ] && echo "${APN} configuration has not been changed! return..." && return
+
+    local ATCMD="AT+CGDCONT=1,\"IPV4V6\",\"${APN}\""
+    local O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+    logger -t "NCM" "$ATCMD" "$O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set APN"
+    else
+        echo "Set APN to $APN succeed"
+        logger -t "NCM" "set apn $APN success"
+    fi
+}
+
+# 设置入网方式
+function dial_net()
+{
+    local rat=""
+    local ATCMD=""
+    [ -n "$DIAL_PARAMS" ] && rat=$(echo "$DIAL_PARAMS" | jq -r '.rat // empty')
+    [ ! -n "$rat" ] && logger -t "NCM" "Radio Access Technology(rat):${rat}" && return
+
+    rat=$(echo "$rat" | tr a-z A-Z)
+    echo "$rat"
+
+    logger -t "NCM" "Radio Access Technology(rat):${rat}"
+
+    # 避免重复设置
+    query_net_settings
+    [ "$rat" = "${SETTINGS_NET}" ] && echo "Radio Access Technology has not been changed! return..." && return
+
+    # LTE
+    [ "$rat" = "LTE" ] && {
+        ATCMD='AT^SYSCFGEX=\"03\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'
+        O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: AT^SYSCFGEX=\"03\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,"
+        else
+            echo "AT^SYSCFGEX=\"03\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,, succeed"
+        fi
+
+        return
+    }
+
+    ATCMD="AT^C5GOPTION?"
+    O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+    
+    logger -t "NCM" "$ATCMD $O"
+
+    local awk_output=$(echo "$O" | awk -F'[,:]+' '/C5GOPTION/{gsub(/^[ \t]+|[ \t]+$/, "", $2); printf "nr_sa_support_flag=%s nr_dc_mode=%s c5g_access_mode=%s",$2,$3,$4}')
+
+    # SA only
+    [ "$rat" = "SA" ] && {
+
+        # 入网优先级,仅允许NR
+        ATCMD='AT^SYSCFGEX=\"08\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: AT^SYSCFGEX=\"08\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,"
+        else
+            echo "set AT^SYSCFGEX=\"08\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,, succeed"
+        fi
+
+        # 本来就是SA only, 不必重复设置
+        [ x"nr_sa_support_flag" = "x1" ] && [ x"nr_dc_mode" = "x0" ] && [ x"c5g_access_mode" = "x1" ] && { 
+            logger -t "NCM" "Radio Access Technology(rat): SA only"    
+            echo "Already in SA only" && return 
+        }
+
+        # 飞行模式开
+        ATCMD="AT+CFUN=0"
+        O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set AT+CFUN=0"
+        else
+            echo "set AT+CFUN=0 succeed"
+        fi
+
+        # 设置SA only
+        ATCMD="AT^C5GOPTION=1,0,1"
+        O=$(sms_tool -D -d $DEVICE at "AT^C5GOPTION=1,0,1" | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set C5GOPTION SA"
+        else
+            echo "set C5GOPTION SA succeed"
+            logger -t "NCM" "Radio Access Technology(rat): set to SA only success" 
+        fi
+
+        # 飞行模式关,并触发软重启
+        ATCMD="AT+CFUN=1"
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set AT+CFUN=1,1"
+        else
+            echo "set AT+CFUN=1,1 succeed"
+        fi
+
+        return
+    }
+
+    # SA + NSA
+    [ "$rat" = "SA+NSA" ] && {
+
+        # 入网优先级,允许NR+LTE
+        ATCMD='AT^SYSCFGEX=\"0803\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'
+        O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: AT^SYSCFGEX=\"0803\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,"
+        else
+            echo "AT^SYSCFGEX=\"0803\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,, succeed"
+        fi
+
+        # 本来就是SA+NSA, 不必重复设置
+        [ x"nr_sa_support_flag" = "x1" ] && [ x"nr_dc_mode" = "x1" ] && [ x"c5g_access_mode" = "x1" ] && {
+            logger -t "NCM" "Radio Access Technology(rat): SA+NSA" 
+            echo "Already in SA+NSA" && return 
+        }
+
+        # 飞行模式开
+        ATCMD="AT+CFUN=0"
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set AT+CFUN=0"
+        else
+            echo "set AT+CFUN=0 succeed"
+        fi
+
+        # 设置SA + NSA
+        ATCMD="AT^C5GOPTION=1,1,1"
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set C5GOPTION SA+NSA"
+        else
+            echo "set C5GOPTION SA+NSA succeed"
+            logger -t "NCM" "Radio Access Technology(rat): set SA+NSA success" 
+        fi
+
+        # 飞行模式关,并触发软重启
+        ATCMD="AT+CFUN=1"
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set AT+CFUN=1"
+        else
+            echo "set AT+CFUN=1 succeed"
+        fi
+
+        return
+    }
+
+    # NSA only
+    [ "$rat" = "NSA" ] && {
+
+        # 入网优先级,允许NR+LTE
+        ATCMD='AT^SYSCFGEX=\"0803\",3FFFFFFF,1,2,7FFFFFFFFFFFFFFF,,'
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to SYSCFGEX 0803"
+        else
+            echo "set SYSCFGEX to 0803 succeed"
+        fi
+
+        # 本来就是NSA only, 不必重复设置
+        [ x"nr_sa_support_flag" = "x0" ] && [ x"nr_dc_mode" = "x1" ] && [ x"c5g_access_mode" = "x0" ] && {
+            logger -t "NCM" "Radio Access Technology(rat): NSA only" 
+            echo "Already in NSA only" && return 
+        }
+
+        # 飞行模式开
+        ATCMD="AT+CFUN=0"
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set AT+CFUN=0"
+        else
+            echo "set AT+CFUN=0 succeed"
+        fi
+
+        # 设置NSA only
+        ATCMD="AT^C5GOPTION=0,1,0"
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set C5GOPTION NSA only"
+        else
+            logger -t "NCM" "Radio Access Technology(rat): set NSA only success" 
+            echo "set C5GOPTION NSA only succeed"
+        fi
+
+        # 飞行模式关,并触发软重启
+        ATCMD="AT+CFUN=1"
+        O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+        logger -t "NCM" "$ATCMD $O"
+
+        if ! echo "$O" | grep -q "OK"; then
+            echo "Error: Failed to set AT+CFUN=1"
+        else
+            echo "set AT+CFUN=1 succeed"
+        fi
+
+        return
+    }
+}
+
+# 设置鉴权
+function dial_auth()
+{
+    local auth=""
+    local passwd="" 
+    local username=""
+    local ATCMD=""
+
+    # 先设置无鉴权
+    ATCMD="AT^AUTHDATA=1,0,"
+    O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD $O"
+
+    [ -n "$DIAL_PARAMS" ] && auth=$(echo "$DIAL_PARAMS" | jq -r '.auth // empty')
+    [ ! -n "$auth" ] && logger -t "NCM" "auth is empty! return..." && return
+    [ -n "$DIAL_PARAMS" ] && passwd=$(echo "$DIAL_PARAMS" | jq -r '.passwd // empty')
+    [ ! -n "$passwd" ] && logger -t "NCM" "auth password is empty! return..." && return
+    [ -n "$DIAL_PARAMS" ] && username=$(echo "$DIAL_PARAMS" | jq -r '.username // empty')
+    [ ! -n "$username" ] && logger -t "NCM" "auth username is empty! return..." && return
+
+    auth=$(echo "$auth" | tr a-z A-Z)
+
+    [ "$auth" = "PAP" ] && ATCMD="AT^AUTHDATA=1,1,\"\",\"$passwd\",\"$username\""
+    [ "$auth" = "CHAP" ] && ATCMD="AT^AUTHDATA=1,2,\"\",\"$passwd\",\"$username\""
+    [ "$auth" = "NONE" ] && ATCMD="AT^AUTHDATA=1,0,"
+
+    O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD $O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+}
+
+# 锁5G频段 不锁频点 不锁PCI小区
+function dial_NRBANDLOCK()
+{   
+    local NRLOCKPARAMS=$1
+    local NRBAND=""
+    local NRBAND_COUNT=0
+    echo ${NRLOCKPARAMS}
+    [ -n "$NRLOCKPARAMS" ] && NRBAND=$(echo "$NRLOCKPARAMS" | jq -r '.band // empty')    
+    [ -n "$NRLOCKPARAMS" ] && NRBAND_COUNT=$(echo "$NRLOCKPARAMS" | jq -r '.band | length')
+    NRBAND=$(echo ${NRBAND} | sed 's/[][]//g; s/ //g')
+    echo ${NRBAND}
+
+    local ATCMD="AT^NRFREQLOCK=3,0,${NRBAND_COUNT},\"${NRBAND}\""
+    local O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD $O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+}
+
+# 锁5G频点 必须同时锁频段 不锁PCI小区
+function dial_NRARFCNLOCK()
+{   
+    local NRLOCKPARAMS=$1
+    local NRBAND=""
+    local NRBAND_COUNT=0
+    local NRARFCN=""
+    local NRARFCN_COUNT=0
+    local NRSCSTYPE=""
+    local NRSCSTYPE_COUNT=0
+    echo ${NRLOCKPARAMS}
+    [ -n "$NRLOCKPARAMS" ] && NRBAND=$(echo "$NRLOCKPARAMS" | jq -r '.band // empty')    
+    [ -n "$NRLOCKPARAMS" ] && NRBAND_COUNT=$(echo "$NRLOCKPARAMS" | jq -r '.band | length')
+    NRBAND=$(echo ${NRBAND} | sed 's/[][]//g; s/ //g')
+    # echo ${NRBAND}
+
+    [ -n "$NRLOCKPARAMS" ] && NRARFCN=$(echo "$NRLOCKPARAMS" | jq -r '.arfcn // empty')    
+    [ -n "$NRLOCKPARAMS" ] && NRARFCN_COUNT=$(echo "$NRLOCKPARAMS" | jq -r '.arfcn | length')
+    NRARFCN=$(echo ${NRARFCN} | sed 's/[][]//g; s/ //g')
+    # echo ${NRARFCN}
+
+    [ -n "$NRLOCKPARAMS" ] && NRSCSTYPE=$(echo "$NRLOCKPARAMS" | jq -r '.scstype // empty')    
+    [ -n "$NRLOCKPARAMS" ] && NRSCSTYPE_COUNT=$(echo "$NRLOCKPARAMS" | jq -r '.scstype | length')
+    NRSCSTYPE=$(echo ${NRSCSTYPE} | sed 's/[][]//g; s/ //g')
+
+    [ "${NRARFCN_COUNT}" != "${NRBAND_COUNT}" ] || [ "${NRARFCN_COUNT}" != "${NRSCSTYPE_COUNT}" ] || [ "${NRARFCN_COUNT}" != "${PCI_COUNT}" ] && 
+    logger -t "NCM" "NRFREQLOCK params error" && echo "params error!" && return
+
+    local ATCMD="AT^NRFREQLOCK=1,0,${NRBAND_COUNT},\"${NRBAND}\",\"${NRARFCN}\",\"${NRSCSTYPE}\""
+    local O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD $O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+}
+
+# 5G 锁PCI 必须同时锁频段和频点 
+function dial_NRPCILOCK()
+{
+    local NRLOCKPARAMS=$1
+    local NRBAND=""
+    local NRBAND_COUNT=0
+    local NRARFCN=""
+    local NRARFCN_COUNT=0
+    local NRSCSTYPE=""
+    local NRSCSTYPE_COUNT=0
+    local PCI=""
+    local PCI_COUNT=0
+
+    echo ${NRLOCKPARAMS}
+    [ -n "$NRLOCKPARAMS" ] && NRBAND=$(echo "$NRLOCKPARAMS" | jq -r '.band // empty')    
+    [ -n "$NRLOCKPARAMS" ] && NRBAND_COUNT=$(echo "$NRLOCKPARAMS" | jq -r '.band | length')
+    NRBAND=$(echo ${NRBAND} | sed 's/[][]//g; s/ //g')
+    # echo ${NRBAND}
+
+    [ -n "$NRLOCKPARAMS" ] && NRARFCN=$(echo "$NRLOCKPARAMS" | jq -r '.arfcn // empty')    
+    [ -n "$NRLOCKPARAMS" ] && NRARFCN_COUNT=$(echo "$NRLOCKPARAMS" | jq -r '.arfcn | length')
+    NRARFCN=$(echo ${NRARFCN} | sed 's/[][]//g; s/ //g')
+    # echo ${NRARFCN}
+
+    [ -n "$NRLOCKPARAMS" ] && NRSCSTYPE=$(echo "$NRLOCKPARAMS" | jq -r '.scstype // empty')    
+    [ -n "$NRLOCKPARAMS" ] && NRSCSTYPE_COUNT=$(echo "$NRLOCKPARAMS" | jq -r '.scstype | length')
+    NRSCSTYPE=$(echo ${NRSCSTYPE} | sed 's/[][]//g; s/ //g')
+
+    [ -n "$NRLOCKPARAMS" ] && PCI=$(echo "$NRLOCKPARAMS" | jq -r '.pci // empty')    
+    [ -n "$NRLOCKPARAMS" ] && PCI_COUNT=$(echo "$NRLOCKPARAMS" | jq -r '.pci | length')
+    PCI=$(echo ${PCI} | sed 's/[][]//g; s/ //g')
+
+    [ "${NRARFCN_COUNT}" != "${NRBAND_COUNT}" ] || [ "${NRARFCN_COUNT}" != "${NRSCSTYPE_COUNT}" ] && \
+    logger -t "NCM" "NRFREQLOCK params error!" && echo "Params error!" && return
+
+    local ATCMD="AT^NRFREQLOCK=2,0,${NRBAND_COUNT},\"${NRBAND}\",\"${NRARFCN}\",\"${NRSCSTYPE}\",\"${PCI}\""
+    local O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+    
+    logger -t "NCM" "$ATCMD $O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+}
+
+# 解锁5G频段 解锁PCI小区
+function dial_NRUNLOCK()
+{
+    local ATCMD="AT^NRFREQLOCK=0"
+    local O=$(sms_tool -D -d $DEVICE at ${ATCMD} | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD $O"
+    
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+}
+
+# 锁5G频段 PCI小区
+function dial_NRFREQLOCK()
+{
+    local nrfreqlock=""
+    local operatetype=""
+    local num=""
+    local band=""
+    local arfcn=""
+    local scstype=""
+    local ATCMD=""
+
+    [ -n "$DIAL_PARAMS" ] && nrfreqlock=$(echo "$DIAL_PARAMS" | jq -r '.nrfreqlock // empty')
+    [ ! -n "$nrfreqlock" ] && { 
+        
+        logger -t "NCM" "nrfreqlock is empty! return..."
+        logger -t "NCM" "nrfreqlock is empty! return..."
+        return     
+    }
+
+    operatetype=$(echo "$nrfreqlock" | jq -r '.operatetype // empty')
+    case "$operatetype" in
+        0) 
+            dial_NRUNLOCK
+            ;;
+        1) 
+            dial_NRARFCNLOCK "${nrfreqlock}"
+            ;;
+        2)
+            dial_NRPCILOCK "${nrfreqlock}"
+            ;;  
+        3)  
+            dial_NRBANDLOCK "${nrfreqlock}"
+            ;;
+    esac
+
+    # 飞行模式开
+    ATCMD="AT+CFUN=0"
+    local O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+    
+    logger -t "NCM" "$ATCMD $O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set AT+CFUN=0"
+    else
+        echo "set AT+CFUN=0 succeed"
+    fi
+
+    # 飞行模式关
+    ATCMD="AT+CFUN=1"
+    O=$(sms_tool -D -d $DEVICE at $ATCMD | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD $O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set AT+CFUN=1"
+    else
+        echo "set AT+CFUN=1 succeed"
+    fi
+}
+
+#  关闭4G 锁频 锁小区功能
+function dial_LTEUNLOCK()
+{
+    local ATCMD="AT^LTEFREQLOCK=0"
+    local O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+} 
+
+# 4G 锁频点
+function dial_LTEARFCNLOCK()
+{
+    local LTELOCKPARAMS=$1
+    local LTEBAND=""
+    local LTEBAND_COUNT=0
+    local LTEARFCN=""
+    local LTEARFCN_COUNT=0
+    echo ${LTELOCKPARAMS}
+    [ -n "$LTELOCKPARAMS" ] && LTEBAND=$(echo "$LTELOCKPARAMS" | jq -r '.band // empty')    
+    [ -n "$LTELOCKPARAMS" ] && LTEBAND_COUNT=$(echo "$LTELOCKPARAMS" | jq -r '.band | length')
+    LTEBAND=$(echo ${LTEBAND} | sed 's/[][]//g; s/ //g')
+    # echo ${LTEBAND}
+
+    [ -n "$LTELOCKPARAMS" ] && LTEARFCN=$(echo "$LTELOCKPARAMS" | jq -r '.arfcn // empty')    
+    [ -n "$LTELOCKPARAMS" ] && LTEARFCN_COUNT=$(echo "$LTELOCKPARAMS" | jq -r '.arfcn | length')
+    LTEARFCN=$(echo ${LTEARFCN} | sed 's/[][]//g; s/ //g')
+    # echo ${LTEARFCN}
+
+    [ "${LTEARFCN_COUNT}" != "${LTEBAND_COUNT}" ] && echo "Params error!" && return
+
+    local ATCMD="AT^LTEFREQLOCK=1,0,${LTEBAND_COUNT},\"${LTEBAND}\",\"${LTEARFCN}\""
+    local O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+}
+
+# 4G 锁小区
+function dial_LTEPCILOCK()
+{
+    local LTELOCKPARAMS=$1
+    local LTEBAND=""
+    local LTEBAND_COUNT=0
+    local LTEARFCN=""
+    local LTEARFCN_COUNT=0
+    local LTEPCI=""
+    local LTEPCI_COUNT=0
+    echo ${LTELOCKPARAMS}
+    [ -n "$LTELOCKPARAMS" ] && LTEBAND=$(echo "$LTELOCKPARAMS" | jq -r '.band // empty')    
+    [ -n "$LTELOCKPARAMS" ] && LTEBAND_COUNT=$(echo "$LTELOCKPARAMS" | jq -r '.band | length')
+    LTEBAND=$(echo ${LTEBAND} | sed 's/[][]//g; s/ //g')
+    # echo ${LTEBAND}
+
+    [ -n "$LTELOCKPARAMS" ] && LTEARFCN=$(echo "$LTELOCKPARAMS" | jq -r '.arfcn // empty')    
+    [ -n "$LTELOCKPARAMS" ] && LTEARFCN_COUNT=$(echo "$LTELOCKPARAMS" | jq -r '.arfcn | length')
+    LTEARFCN=$(echo ${LTEARFCN} | sed 's/[][]//g; s/ //g')
+    # echo ${LTEARFCN}
+
+    [ -n "$LTELOCKPARAMS" ] && LTEPCI=$(echo "$LTELOCKPARAMS" | jq -r '.pci // empty')    
+    [ -n "$LTELOCKPARAMS" ] && LTEPCI_COUNT=$(echo "$LTELOCKPARAMS" | jq -r '.pci | length')
+    LTEPCI=$(echo ${LTEPCI} | sed 's/[][]//g; s/ //g')
+    # echo ${LTEPCI}
+
+    [ "${LTEARFCN_COUNT}" != "${LTEBAND_COUNT}" ] || [ "${LTEARFCN_COUNT}" != "${LTEPCI_COUNT}" ] && echo "Params error!" && return
+
+    local ATCMD="AT^LTEFREQLOCK=2,0,${LTEBAND_COUNT},\"${LTEBAND}\",\"${LTEARFCN}\",\"${LTEPCI}\""
+    local O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+}
+
+# 4G 锁band 不锁频点 不锁PCI小区
+function dial_LTEBANDLOCK()
+{
+    local LTELOCKPARAMS=$1
+    local LTEBAND=""
+    local LTEBAND_COUNT=""
+    echo ${LTELOCKPARAMS}
+    [ -n "$LTELOCKPARAMS" ] && LTEBAND=$(echo "$LTELOCKPARAMS" | jq -r '.band // empty')    
+    [ -n "$LTELOCKPARAMS" ] && LTEBAND_COUNT=$(echo "$LTELOCKPARAMS" | jq -r '.band | length')
+    LTEBAND=$(echo ${LTEBAND} | sed 's/[][]//g; s/ //g')
+    # echo ${LTEBAND}
+
+    local ATCMD="AT^LTEFREQLOCK=3,0,${LTEBAND_COUNT},\"${LTEBAND}\""
+    local O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set ${ATCMD}"
+    else
+        echo "Set ${ATCMD} succeed"
+    fi
+}
+
+# 锁4G频段 PCI小区
+function dial_LTEFREQLOCK()
+{
+    local ltefreqlock=""
+    local operatetype=""
+    local num=""
+    local band=""
+    local arfcn=""
+    local pci=""
+
+    [ -n "$DIAL_PARAMS" ] && ltefreqlock=$(echo "$DIAL_PARAMS" | jq -r '.ltefreqlock // empty')
+    [ ! -n "$ltefreqlock" ] && return
+
+    operatetype=$(echo "$ltefreqlock" | jq -r '.operatetype // empty')
+    echo "operatetype=${operatetype}"
+    case "$operatetype" in
+        0) 
+            dial_LTEUNLOCK
+            ;;
+        1) 
+            dial_LTEARFCNLOCK "${ltefreqlock}"
+            ;;
+        2)
+            dial_LTEPCILOCK "${ltefreqlock}"
+            ;;  
+        3)  
+            dial_LTEBANDLOCK "${ltefreqlock}"
+            ;;
+    esac
+
+    # 飞行模式开
+    local ATCMD="AT+CFUN=0"
+    local O=$(sms_tool -D -d $DEVICE at "AT+CFUN=0" | tr -d '\r')
+
+    logger -t "NCM" "$ATCMD" "$O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set AT+CFUN=0"
+    else
+        echo "set AT+CFUN=0 succeed"
+    fi
+
+    # 飞行模式关
+    ATCMD="AT+CFUN=1"
+    O=$(sms_tool -D -d $DEVICE at "AT+CFUN=1" | tr -d '\r')
+    
+    logger -t "NCM" "$ATCMD" "$O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: Failed to set AT+CFUN=1"
+    else
+        echo "set AT+CFUN=1 succeed"
+    fi
+}
+
+function dial()
+{
+    logger -t "NCM" "$0" "$@"
+
+    local ATCMD=""
+
+    init                # 确保模组的基本设置正确
+    dial_net            # 入网方式设置
+    dial_apn            # 拨号时设置APN
+    dial_auth           # 鉴权设置
+    dial_NRFREQLOCK     # 锁5G频段 PCI小区
+    dial_LTEFREQLOCK    # 锁4G频段 PCI小区
+
+    # 必须先断开连接才能激活PDP上下文
+    ATCMD="AT^NDISDUP=1,0"
+    O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+    logger -t "NCM" "$ATCMD" "$O"
+
+    # 执行拨号指令
+    ATCMD="AT^NDISDUP=1,1"
+    O=$(sms_tool -D -d $DEVICE at "${ATCMD}" | tr -d '\r')
+    logger -t "NCM" "$ATCMD" "$O"
+
+    if ! echo "$O" | grep -q "OK"; then
+        echo "Error: ${ATCMD} Reply:${O}"
+    else
+        echo "${ATCMD} succeed"
+    fi
+}
+
+
+case "$0" in
+    *product.sh*) 
+        product
+        ;;
+    *params.sh*) 
+        status
+        ;;
+    *query_settings.sh*)
+        query_settings
+        ;;  
+    *dial.sh*)
+        dial ${DIAL_PARAMS}
+        ;;
+esac
+
+
+
+# T=$(sms_tool -d $DEVICE at "at+gmr" | grep -v "^at" | xargs)
+# [ -n "$T" ] && REVISION="$T"
+# T=$(sms_tool -d $DEVICE at at+gsn | grep -v "^at"  | xargs)
+# [ -n "$T" ] && IMEI="$T"
+# T=$(sms_tool -d $DEVICE at at+iccid | awk '/^ICCID:/{print $2}' | xargs)
+# [ -n "$T" ] && ICCID="$T"
+# T=$(sms_tool -d $DEVICE at at+cimi | grep -v "^at"  | xargs)
+# [ -n "$T" ] && IMSI="$T"
